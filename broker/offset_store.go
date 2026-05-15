@@ -44,24 +44,7 @@ func NewOffsetStore(path string) (*OffsetStore, error) {
 // Commit records that this consumer group has processed all messages up to
 // (and including) offset on topic, then flushes to disk.
 func (s *OffsetStore) Commit(topic string, offset uint64) error {
-	// TODO: implement Commit
-	//
-	// Step 1 — lock the mutex, update the in-memory map, then unlock:
-	//     s.mu.Lock()
-	//     s.offsets[topic] = offset
-	//     s.mu.Unlock()
-	//   (unlock before the disk write so other goroutines aren't blocked
-	//    while we do I/O — but snapshot the map first)
-	//
-	// Step 2 — serialize the offsets map to JSON bytes:
-	//     s.mu.Lock()
-	//     data, err := json.Marshal(s.offsets)
-	//     s.mu.Unlock()
-	//     if err != nil { return err }
-	//
-	// Step 3 — write to disk atomically with os.WriteFile:
-	//     return os.WriteFile(s.path, data, 0644)
-	//   0644 = owner read/write, everyone else read (same permission as segments)
+	
 	s.mu.Lock()
 	s.offsets[topic] = offset
 	s.mu.Unlock() 
@@ -78,12 +61,7 @@ func (s *OffsetStore) Commit(topic string, offset uint64) error {
 // Get returns the last committed offset for topic.
 // Returns (0, false) if no offset has been committed yet for this topic.
 func (s *OffsetStore) Get(topic string) (uint64, bool) {
-	// TODO: implement Get
-	//
-	// Lock the mutex, read from the map, unlock, return.
-	// Map lookups in Go return two values: value, ok
-	//     val, ok := s.offsets[topic]
-	// ok is false if the key doesn't exist.
+	
 	s.mu.Lock()
 	val, ok := s.offsets[topic] 
 	s.mu.Unlock()

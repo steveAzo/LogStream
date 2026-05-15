@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\User\\\\Desktop\\\\LogStream\\\\api\")"
-    ]
-  }
-}
