@@ -20,9 +20,10 @@ const recordHeaderSize = 4
 //	└──────────────────┴──────────────┴──────────────────┴───────────────┘
 type Segment struct {
 	file       *os.File
-	path       string // stored so compaction can delete the file
+	path       string
 	baseOffset uint64
 	nextOffset uint64
+	syncWrites bool // if true, fsync after every Append (default: true)
 }
 
 func NewSegment(path string, baseOffset uint64) (*Segment, error) {
@@ -42,6 +43,7 @@ func NewSegment(path string, baseOffset uint64) (*Segment, error) {
 		path:       path,
 		baseOffset: baseOffset,
 		nextOffset: baseOffset + uint64(info.Size()),
+		syncWrites: true,
 	}, nil
 }
 
@@ -71,6 +73,12 @@ func (s *Segment) Append(key, value []byte) (uint64, error) {
 	}
 
 	s.nextOffset += uint64(2*recordHeaderSize + len(key) + len(value))
+
+	if s.syncWrites {
+		if err := s.file.Sync(); err != nil {
+			return 0, fmt.Errorf("fsync segment: %w", err)
+		}
+	}
 	return offset, nil
 }
 
