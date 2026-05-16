@@ -1,8 +1,10 @@
-package broker
+package broker_test
 
 import (
 	"os"
 	"testing"
+
+	"LogStream/broker"
 )
 
 func TestSegmentAppendAndRead(t *testing.T) {
@@ -14,7 +16,7 @@ func TestSegmentAppendAndRead(t *testing.T) {
 	f.Close()
 	defer os.Remove(path)
 
-	seg, err := NewSegment(path, 0)
+	seg, err := broker.NewSegment(path, 0)
 	if err != nil {
 		t.Fatalf("NewSegment: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestSegmentOffsetProgresses(t *testing.T) {
 	f.Close()
 	defer os.Remove(path)
 
-	seg, _ := NewSegment(path, 0)
+	seg, _ := broker.NewSegment(path, 0)
 	defer seg.Close()
 
 	// nil key: 4 (key len) + 0 (key) + 4 (val len) + 1 (val "a") = 9 bytes

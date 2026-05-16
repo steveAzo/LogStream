@@ -1,9 +1,11 @@
-package broker
+package broker_test
 
 import (
 	"fmt"
 	"os"
 	"testing"
+
+	"LogStream/broker"
 )
 
 func TestPartitionAppendAndRead(t *testing.T) {
@@ -15,7 +17,7 @@ func TestPartitionAppendAndRead(t *testing.T) {
 
 	// nil key: 4+0+4+N bytes per record.
 	// "hello" = 9 bytes, "world" = 9 bytes → 18 bytes triggers roll at maxSize=20.
-	p, err := NewPartition(dir, 20)
+	p, err := broker.NewPartition(dir, 20)
 	if err != nil {
 		t.Fatalf("NewPartition: %v", err)
 	}
@@ -32,8 +34,8 @@ func TestPartitionAppendAndRead(t *testing.T) {
 		offsets[i] = off
 	}
 
-	if len(p.segments) < 2 {
-		t.Errorf("expected multiple segments after rolling, got %d", len(p.segments))
+	if len(p.Segments()) < 2 {
+		t.Errorf("expected multiple segments after rolling, got %d", len(p.Segments()))
 	}
 
 	for i, msg := range messages {
@@ -56,7 +58,7 @@ func TestPartitionSurvivesRestart(t *testing.T) {
 
 	offsets := make([]uint64, 3)
 
-	p, _ := NewPartition(dir, DefaultMaxSegmentSize)
+	p, _ := broker.NewPartition(dir, broker.DefaultMaxSegmentSize)
 	for i := 0; i < 3; i++ {
 		off, err := p.Append(nil, []byte(fmt.Sprintf("msg-%d", i)))
 		if err != nil {
@@ -66,7 +68,7 @@ func TestPartitionSurvivesRestart(t *testing.T) {
 	}
 	p.Close()
 
-	p2, err := NewPartition(dir, DefaultMaxSegmentSize)
+	p2, err := broker.NewPartition(dir, broker.DefaultMaxSegmentSize)
 	if err != nil {
 		t.Fatalf("reopen partition: %v", err)
 	}

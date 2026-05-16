@@ -83,6 +83,11 @@ func (t *Topic) NumPartitions() int {
 	return len(t.partitions)
 }
 
+// PartitionAt returns the partition at the given index.
+func (t *Topic) PartitionAt(idx int) *Partition {
+	return t.partitions[idx]
+}
+
 // Close closes all partitions.
 func (t *Topic) Close() error {
 	for _, p := range t.partitions {

@@ -1,6 +1,6 @@
 # LogStream
 
-A log-based message broker built from scratch in Go. Persistent, append-only, partitioned — a minimal Kafka implementation built to understand why these systems are designed the way they are.
+A log-based message broker built from scratch in Go. Persistent, append-only, partitioned, replicated — a minimal Kafka implementation built to understand why these systems are designed the way they are.
 
 Built while reading *Designing Data-Intensive Applications* (chapters 3, 4, 11).
 
@@ -14,11 +14,12 @@ LogStream is an HTTP message broker backed by append-only segment files on disk.
 Producer
    │
    ▼
-HTTP API  ──────────────────────────────────────────────────
-   │                                                        │
-   ▼                                                        ▼
-Topic                                               OffsetStore
-   │  (FNV key routing)                    (consumer group checkpoints)
+HTTP API (Leader :8080) ─────────────────────────────────────
+   │                    │ replication fanout                 │
+   │              Follower :8081                      Follower :8082
+   ▼
+Topic
+   │  (FNV key routing)
    ├── Partition 0
    │      ├── 00000000000000000000.log
    │      └── 00000000000000000512.log  ← sealed, rolled at 100MB
@@ -80,7 +81,13 @@ BenchmarkReadAt            ~7,915 ns/op        ~126,000 reads/sec
 Hardware: Intel i3-1125G4 @ 2.00GHz, Windows 11
 ```
 
-**The 90× gap is why Kafka defaults to no per-message fsync.** Replicating to 3 nodes over a network (~1ms round trip) costs the same as one fsync but gives fault tolerance instead of just durability. LogStream uses fsync for single-node correctness because it has no replication layer yet.
+**The 90× gap is why Kafka defaults to no per-message fsync.** Replicating to N nodes over a network (~1ms round trip) costs the same as one fsync but gives fault tolerance instead of just durability. LogStream implements both: fsync on each node for single-node correctness, plus synchronous replication to followers before the leader acknowledges the write.
+
+### Leader-follower replication
+
+On a write, the leader appends to its own log then fans out to all followers concurrently using goroutines. It waits for every follower to acknowledge before returning success to the producer. This is synchronous replication — the strongest consistency guarantee, at the cost of latency equal to the slowest follower.
+
+Each node has its own data directory (`data-<port>/`) so multiple instances can run on the same machine. Followers expose a `/internal/replicate` endpoint that writes directly to the specified partition, bypassing key routing — the leader already made that decision.
 
 ---
 
@@ -146,13 +153,29 @@ POST /topics/{topic}/partitions/{partition}/compact
 
 ## Running locally
 
+### Single node
+
 ```bash
 git clone https://github.com/steveAzo/logstream
 cd logstream
 go run .
-# Server listens on :8080
-# Data written to ./data/
+# Listens on :8080, data written to ./data-8080/
 ```
+
+### Three-node cluster (leader + 2 followers)
+
+```bash
+# Terminal 1 — leader
+go run . -addr=:8080 -role=leader -followers=:8081,:8082
+
+# Terminal 2 — follower 1
+go run . -addr=:8081 -role=follower
+
+# Terminal 3 — follower 2
+go run . -addr=:8082 -role=follower
+```
+
+Produce to the leader; read from any node at the same partition and offset.
 
 Requirements: Go 1.22+
 
@@ -161,18 +184,27 @@ Requirements: Go 1.22+
 ## Running tests and benchmarks
 
 ```bash
-# Unit tests
-go test ./broker/
+# Unit tests (segment, partition, compaction)
+go test ./tests/
 
-# Benchmarks
-go test -bench=Benchmark -benchtime=5s -benchmem ./broker/
+# Benchmarks (fsync vs no-fsync vs reads)
+go test -bench=Benchmark -benchtime=5s -benchmem ./tests/
+```
+
+---
+
+## Project layout
+
+```
+broker/         core storage engine (segment, partition, topic, compaction, replication)
+api/            HTTP layer — routes and handlers
+tests/          all tests and benchmarks (external test package, broker_test)
+main.go         entry point — flag parsing, node role wiring
 ```
 
 ---
 
 ## Roadmap
 
-- [ ] Replication — write to N nodes before ack, leader/follower model
 - [ ] Batch produce — amortise fsync cost across multiple messages
-- [ ] Compaction test coverage
 - [ ] Binary protocol (replace HTTP+JSON with length-prefixed TCP frames)

@@ -35,7 +35,7 @@ func Compact(t *Topic, partitionIdx int) error {
 			key, value, err := seg.ReadAt(offset)
 			if err != nil { return err }
 			latest[string(key)] = record{key: key, value: value}
-			offset += uint64(2*recordHeaderSize + len(key) + len(value))
+			offset += uint64(2*RecordHeaderSize + len(key) + len(value))
 		}
 	}
 

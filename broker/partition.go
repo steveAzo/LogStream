@@ -124,6 +124,9 @@ func (p *Partition) ReadAt(offset uint64) (key, value []byte, err error) {
 	return seg.ReadAt(offset)
 }
 
+// Segments returns the ordered list of segments in this partition.
+func (p *Partition) Segments() []*Segment { return p.segments }
+
 // Close closes all segments.
 func (p *Partition) Close() error {
 	for _, seg := range p.segments {

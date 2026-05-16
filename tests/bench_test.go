@@ -1,20 +1,11 @@
-package broker
+package broker_test
 
 import (
 	"os"
 	"testing"
-)
 
-// newSegmentNoSync creates a segment with fsync disabled — for benchmarking only.
-// Never use this in production: a crash between Write() and the OS flush loses data.
-func newSegmentNoSync(path string, baseOffset uint64) (*Segment, error) {
-	seg, err := NewSegment(path, baseOffset)
-	if err != nil {
-		return nil, err
-	}
-	seg.syncWrites = false
-	return seg, nil
-}
+	"LogStream/broker"
+)
 
 // payload simulates a realistic log message (~128 bytes).
 var payload = []byte(`{"user_id":"u_8f3a92","event":"page_view","path":"/dashboard","ts":1716057600}`)
@@ -27,13 +18,13 @@ func BenchmarkAppendWithSync(b *testing.B) {
 	f.Close()
 	defer os.Remove(path)
 
-	seg, err := NewSegment(path, 0)
+	seg, err := broker.NewSegment(path, 0)
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer seg.Close()
 
-	b.SetBytes(int64(len(payload))) // enables MB/s reporting
+	b.SetBytes(int64(len(payload)))
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
@@ -51,7 +42,7 @@ func BenchmarkAppendNoSync(b *testing.B) {
 	f.Close()
 	defer os.Remove(path)
 
-	seg, err := newSegmentNoSync(path, 0)
+	seg, err := broker.NewSegmentNoSync(path, 0)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -74,10 +65,9 @@ func BenchmarkReadAt(b *testing.B) {
 	f.Close()
 	defer os.Remove(path)
 
-	seg, _ := newSegmentNoSync(path, 0)
+	seg, _ := broker.NewSegmentNoSync(path, 0)
 	defer seg.Close()
 
-	// pre-populate 10k messages, collect their offsets
 	const n = 10_000
 	offsets := make([]uint64, n)
 	for i := range offsets {

@@ -7,9 +7,9 @@ import (
 	"os"
 )
 
-// recordHeaderSize is the number of bytes used to store the length of one field.
+// RecordHeaderSize is the number of bytes used to store the length of one field.
 // Each record has two length-prefixed fields (key and value), so 2 × 4 bytes total overhead.
-const recordHeaderSize = 4
+const RecordHeaderSize = 4
 
 // Segment is a single append-only log file on disk.
 // Record format:
@@ -61,7 +61,7 @@ func (s *Segment) Append(key, value []byte) (uint64, error) {
 	offset := s.nextOffset
 
 	// write key length + key bytes
-	kHeader := make([]byte, recordHeaderSize)
+	kHeader := make([]byte, RecordHeaderSize)
 	binary.BigEndian.PutUint32(kHeader, uint32(len(key)))
 	if _, err := s.file.Write(kHeader); err != nil {
 		return 0, err
@@ -71,7 +71,7 @@ func (s *Segment) Append(key, value []byte) (uint64, error) {
 	}
 
 	// write value length + value bytes
-	vHeader := make([]byte, recordHeaderSize)
+	vHeader := make([]byte, RecordHeaderSize)
 	binary.BigEndian.PutUint32(vHeader, uint32(len(value)))
 	if _, err := s.file.Write(vHeader); err != nil {
 		return 0, err
@@ -80,7 +80,7 @@ func (s *Segment) Append(key, value []byte) (uint64, error) {
 		return 0, err
 	}
 
-	s.nextOffset += uint64(2*recordHeaderSize + len(key) + len(value))
+	s.nextOffset += uint64(2*RecordHeaderSize + len(key) + len(value))
 
 	if s.syncWrites {
 		if err := s.file.Sync(); err != nil {
@@ -98,7 +98,7 @@ func (s *Segment) ReadAt(offset uint64) (key, value []byte, err error) {
 	}
 
 	// read key
-	kHeader := make([]byte, recordHeaderSize)
+	kHeader := make([]byte, RecordHeaderSize)
 	if _, err = io.ReadFull(s.file, kHeader); err != nil {
 		return
 	}
@@ -110,7 +110,7 @@ func (s *Segment) ReadAt(offset uint64) (key, value []byte, err error) {
 	}
 
 	// read value
-	vHeader := make([]byte, recordHeaderSize)
+	vHeader := make([]byte, RecordHeaderSize)
 	if _, err = io.ReadFull(s.file, vHeader); err != nil {
 		return
 	}
@@ -124,6 +124,20 @@ func (s *Segment) ReadAt(offset uint64) (key, value []byte, err error) {
 // Size returns the number of bytes this segment currently holds.
 func (s *Segment) Size() uint64 {
 	return s.nextOffset - s.baseOffset
+}
+
+func (s *Segment) BaseOffset() uint64 { return s.baseOffset }
+func (s *Segment) NextOffset() uint64 { return s.nextOffset }
+
+// NewSegmentNoSync opens a segment with fsync disabled.
+// Safe for followers (replication provides durability) and benchmarks.
+func NewSegmentNoSync(path string, baseOffset uint64) (*Segment, error) {
+	seg, err := NewSegment(path, baseOffset)
+	if err != nil {
+		return nil, err
+	}
+	seg.syncWrites = false
+	return seg, nil
 }
 
 // Close closes the underlying file.
