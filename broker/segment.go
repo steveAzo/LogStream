@@ -38,6 +38,14 @@ func NewSegment(path string, baseOffset uint64) (*Segment, error) {
 		return nil, fmt.Errorf("stat segment %s: %w", path, err)
 	}
 
+	// Seek to end so writes append correctly on reopen.
+	// Without this, the file position starts at 0 and new writes
+	// overwrite existing records instead of appending after them.
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("seek to end of segment %s: %w", path, err)
+	}
+
 	return &Segment{
 		file:       f,
 		path:       path,

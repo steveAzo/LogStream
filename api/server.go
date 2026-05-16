@@ -13,10 +13,11 @@ import (
 
 // Server holds all live topics and offset stores, and handles HTTP requests.
 type Server struct {
-	dataDir string
-	mu      sync.Mutex
-	topics  map[string]*broker.Topic       // topic name → Topic
-	groups  map[string]*broker.OffsetStore // consumer group name → OffsetStore
+	dataDir    string
+	mu         sync.Mutex
+	topics     map[string]*broker.Topic
+	groups     map[string]*broker.OffsetStore
+	replicator *broker.Replicator // nil on followers; set on leader via SetReplicator
 }
 
 func NewServer(dataDir string) *Server {
@@ -27,12 +28,19 @@ func NewServer(dataDir string) *Server {
 	}
 }
 
+// SetReplicator attaches a replicator to the server.
+// Call this on the leader node before starting the HTTP server.
+func (s *Server) SetReplicator(r *broker.Replicator) {
+	s.replicator = r
+}
+
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /topics/{topic}/messages", s.handleProduce)
 	mux.HandleFunc("GET /topics/{topic}/messages", s.handleConsume)
 	mux.HandleFunc("POST /groups/{group}/offsets/{topic}/{partition}", s.handleCommitOffset)
 	mux.HandleFunc("GET /groups/{group}/offsets/{topic}/{partition}", s.handleGetOffset)
 	mux.HandleFunc("POST /topics/{topic}/partitions/{partition}/compact", s.handleCompact)
+	mux.HandleFunc("POST /internal/replicate/{topic}/{partition}", s.handleReplicate)
 }
 
 func (s *Server) getOrCreateTopic(name string) (*broker.Topic, error) {
@@ -101,11 +109,55 @@ func (s *Server) handleProduce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+
+	if s.replicator != nil {
+		if err := s.replicator.Replicate(name, partition, []byte(req.Key), []byte(req.Value)); err != nil {
+			writeError(w, 500, "replication failed: "+err.Error())
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
 		Partition int    `json:"partition"`
 		Offset    uint64 `json:"offset"`
 	}{Partition: partition, Offset: offset})
+}
+
+// handleReplicate handles: POST /internal/replicate/{topic}/{partition}
+// This endpoint is only called by the leader — followers write the replicated
+// record directly to the specified partition, bypassing key routing.
+func (s *Server) handleReplicate(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("topic")
+	partIdx, err := strconv.Atoi(r.PathValue("partition"))
+	if err != nil {
+		writeError(w, 400, "invalid partition")
+		return
+	}
+
+	t, err := s.getOrCreateTopic(name)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	var req struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid JSON")
+		return
+	}
+
+	// Write directly to the specified partition — no key routing here.
+	// The leader already determined the partition; we just replicate it.
+	if _, err := t.AppendToPartition(partIdx, []byte(req.Key), []byte(req.Value)); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleConsume handles: GET /topics/{topic}/messages?partition=1&offset=0

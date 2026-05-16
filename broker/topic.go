@@ -68,6 +68,16 @@ func (t *Topic) ReadAt(partition int, offset uint64) (key, value []byte, err err
 	return t.partitions[partition].ReadAt(offset)
 }
 
+// AppendToPartition writes directly to a specific partition, bypassing key routing.
+// Used by followers receiving replicated writes from the leader — the leader
+// already determined the partition, so followers must write to the same one.
+func (t *Topic) AppendToPartition(partitionIdx int, key, value []byte) (uint64, error) {
+	if partitionIdx < 0 || partitionIdx >= len(t.partitions) {
+		return 0, fmt.Errorf("partition %d out of range (have %d)", partitionIdx, len(t.partitions))
+	}
+	return t.partitions[partitionIdx].Append(key, value)
+}
+
 // NumPartitions returns the number of partitions in this topic.
 func (t *Topic) NumPartitions() int {
 	return len(t.partitions)
