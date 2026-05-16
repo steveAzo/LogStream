@@ -42,34 +42,28 @@ func NewTopic(dir string, numPartitions int, maxSegmentSize uint64) (*Topic, err
 // routeToPartition returns which partition index this key belongs to.
 // This is the core of Kafka's partitioning model.
 func (t *Topic) routeToPartition(key []byte) int {
-	// TODO: implement routeToPartition
-	//
-	// If key is empty (nil or len 0), return 0 — no routing preference.
-	//
-	// Otherwise, hash the key with FNV-1a and mod by partition count:
-	//     h := fnv.New32a()
-	//     h.Write(key)
-	//     return int(h.Sum32()) % len(t.partitions)
-	//
-	// Why FNV? Fast, no crypto overhead, deterministic — same key always
-	// produces the same hash on any machine, so routing is stable across
-	// restarts and across producers.
 
-	return 0
+	if len(key) == 0 {
+		return 0
+	}
+
+	h := fnv.New32a()
+	h.Write(key)
+	return int(h.Sum32()) % len(t.partitions)
 }
 
-// Append routes value to the partition determined by key, then appends it.
+// Append routes key+value to the correct partition and appends both.
 // Returns the partition index and the offset within that partition.
 func (t *Topic) Append(key, value []byte) (partition int, offset uint64, err error) {
 	partition = t.routeToPartition(key)
-	offset, err = t.partitions[partition].Append(value)
+	offset, err = t.partitions[partition].Append(key, value)
 	return
 }
 
-// ReadAt reads the message at offset in the given partition.
-func (t *Topic) ReadAt(partition int, offset uint64) ([]byte, error) {
+// ReadAt reads the key+value record at offset in the given partition.
+func (t *Topic) ReadAt(partition int, offset uint64) (key, value []byte, err error) {
 	if partition < 0 || partition >= len(t.partitions) {
-		return nil, fmt.Errorf("partition %d out of range (have %d)", partition, len(t.partitions))
+		return nil, nil, fmt.Errorf("partition %d out of range (have %d)", partition, len(t.partitions))
 	}
 	return t.partitions[partition].ReadAt(offset)
 }

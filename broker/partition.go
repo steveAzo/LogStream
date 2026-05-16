@@ -95,15 +95,14 @@ func (p *Partition) roll() error {
 	return nil
 }
 
-// Append writes data to the partition. It rolls to a new segment if the
-// active one has hit maxSize, then delegates to the active segment.
-func (p *Partition) Append(data []byte) (uint64, error) {
+// Append writes a key+value record to the partition, rolling if needed.
+func (p *Partition) Append(key, value []byte) (uint64, error) {
 	if p.active().Size() >= p.maxSize {
-		if err := p.roll(); err != nil { return 0, err }
+		if err := p.roll(); err != nil {
+			return 0, err
+		}
 	}
-
-	return p.active().Append(data)
-	
+	return p.active().Append(key, value)
 }
 
 // findSegment returns the segment that owns the given absolute byte offset.
@@ -113,16 +112,14 @@ func (p *Partition) findSegment(offset uint64) (*Segment, error) {
 			return p.segments[i], nil
 		}
 	}
-
 	return nil, fmt.Errorf("no segment for offset %d", offset)
-
 }
 
-// ReadAt reads the message at the given absolute offset.
-func (p *Partition) ReadAt(offset uint64) ([]byte, error) {
+// ReadAt reads the key+value record at the given absolute offset.
+func (p *Partition) ReadAt(offset uint64) (key, value []byte, err error) {
 	seg, err := p.findSegment(offset)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return seg.ReadAt(offset)
 }

@@ -7,41 +7,30 @@ import (
 	"os"
 )
 
-// recordHeaderSize is how many bytes we use to store the length of each message.
-// 4 bytes = uint32 = max message size of ~4GB, plenty for us.
+// recordHeaderSize is the number of bytes used to store the length of one field.
+// Each record has two length-prefixed fields (key and value), so 2 × 4 bytes total overhead.
 const recordHeaderSize = 4
 
 // Segment is a single append-only log file on disk.
+// Record format:
 //
-// Think of it as one chapter in a book. When it gets too big (Phase 2), we
-// close it and start a new chapter. Each chapter (segment) has a baseOffset
-// — the absolute byte position where this file's content starts in the
-// "virtual" infinite log.
-//
-// For the first segment, baseOffset is 0.
-// If segment 1 grows to 500 bytes and we roll, segment 2's baseOffset is 500.
+//	┌──────────────────┬──────────────┬──────────────────┬───────────────┐
+//	│  4 bytes uint32  │  K bytes     │  4 bytes uint32  │  V bytes      │
+//	│  key length      │  key bytes   │  value length    │  value bytes  │
+//	└──────────────────┴──────────────┴──────────────────┴───────────────┘
 type Segment struct {
 	file       *os.File
-	baseOffset uint64 // absolute byte offset of the first byte in this file
-	nextOffset uint64 // absolute byte offset where the next message will land
+	path       string // stored so compaction can delete the file
+	baseOffset uint64
+	nextOffset uint64
 }
 
-// NewSegment opens or creates a segment file at path.
-//
-// baseOffset is the absolute offset this segment starts at (0 for the first
-// segment; for later segments it equals the total bytes written so far).
 func NewSegment(path string, baseOffset uint64) (*Segment, error) {
-	// os.O_CREATE  — create the file if it doesn't exist
-	// os.O_RDWR    — we need both read and write access
-	// 0644         — file permissions: owner read/write, everyone else read
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open segment %s: %w", path, err)
 	}
 
-	// If we're reopening an existing segment (e.g. after a restart), the file
-	// already has data. Stat tells us how big it is so we can set nextOffset
-	// correctly and resume appending without overwriting anything.
 	info, err := f.Stat()
 	if err != nil {
 		f.Close()
@@ -50,74 +39,78 @@ func NewSegment(path string, baseOffset uint64) (*Segment, error) {
 
 	return &Segment{
 		file:       f,
+		path:       path,
 		baseOffset: baseOffset,
 		nextOffset: baseOffset + uint64(info.Size()),
 	}, nil
 }
 
-// Append writes data to the end of the segment and returns the offset at
-// which the message was written. The caller stores this offset so they can
-// call ReadAt later to get the message back.
-//
-// On-disk format per record:
-//
-//	┌──────────────────┬──────────────────────────────┐
-//	│  4 bytes uint32  │  N bytes                     │
-//	│  message length  │  message data                │
-//	└──────────────────┴──────────────────────────────┘
-func (s *Segment) Append(data []byte) (offset uint64, err error) {
-	offset = s.nextOffset
+// Append writes a key+value record to the segment.
+// Returns the absolute byte offset where this record starts.
+func (s *Segment) Append(key, value []byte) (uint64, error) {
+	offset := s.nextOffset
 
-	header := make([]byte, recordHeaderSize)
-	binary.BigEndian.PutUint32(header, uint32(len(data)))
-
-	_, err = s.file.Write(header)
-	if err != nil {
+	// write key length + key bytes
+	kHeader := make([]byte, recordHeaderSize)
+	binary.BigEndian.PutUint32(kHeader, uint32(len(key)))
+	if _, err := s.file.Write(kHeader); err != nil {
+		return 0, err
+	}
+	if _, err := s.file.Write(key); err != nil {
 		return 0, err
 	}
 
-	_, err = s.file.Write(data)
-	if err != nil {
+	// write value length + value bytes
+	vHeader := make([]byte, recordHeaderSize)
+	binary.BigEndian.PutUint32(vHeader, uint32(len(value)))
+	if _, err := s.file.Write(vHeader); err != nil {
+		return 0, err
+	}
+	if _, err := s.file.Write(value); err != nil {
 		return 0, err
 	}
 
-	s.nextOffset += uint64(recordHeaderSize + len(data))
-	return offset, nil 
+	s.nextOffset += uint64(2*recordHeaderSize + len(key) + len(value))
+	return offset, nil
 }
 
-// ReadAt reads back the message that was written at the given absolute byte
-// offset. Pass in the offset returned by Append.
-func (s *Segment) ReadAt(offset uint64) ([]byte, error) {
+// ReadAt reads the key+value record at the given absolute byte offset.
+func (s *Segment) ReadAt(offset uint64) (key, value []byte, err error) {
 	pos := int64(offset - s.baseOffset)
-
-	_, err := s.file.Seek(pos, io.SeekStart)
-	if err != nil {
-		return nil, err
-	} 
-
-	header := make([]byte, recordHeaderSize)
-	_, err = io.ReadFull(s.file, header)
-	if err != nil {
-		return nil, err
+	if _, err = s.file.Seek(pos, io.SeekStart); err != nil {
+		return
 	}
 
-	msgLen := binary.BigEndian.Uint32(header)
-	buf := make([]byte, msgLen)
-	_, err = io.ReadFull(s.file, buf)
-	if err != nil {
-		return nil, err
+	// read key
+	kHeader := make([]byte, recordHeaderSize)
+	if _, err = io.ReadFull(s.file, kHeader); err != nil {
+		return
 	}
-	
+	key = make([]byte, binary.BigEndian.Uint32(kHeader))
+	if len(key) > 0 {
+		if _, err = io.ReadFull(s.file, key); err != nil {
+			return
+		}
+	}
 
-	return buf, nil 
+	// read value
+	vHeader := make([]byte, recordHeaderSize)
+	if _, err = io.ReadFull(s.file, vHeader); err != nil {
+		return
+	}
+	value = make([]byte, binary.BigEndian.Uint32(vHeader))
+	if _, err = io.ReadFull(s.file, value); err != nil {
+		return
+	}
+	return
 }
 
-// Size returns how many bytes this segment currently holds.
+// Size returns the number of bytes this segment currently holds.
 func (s *Segment) Size() uint64 {
 	return s.nextOffset - s.baseOffset
 }
 
-// Close flushes and closes the underlying file.
+// Close closes the underlying file.
 func (s *Segment) Close() error {
 	return s.file.Close()
 }

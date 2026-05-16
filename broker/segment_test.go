@@ -5,10 +5,7 @@ import (
 	"testing"
 )
 
-// Run these tests with: go test ./broker/...
-
 func TestSegmentAppendAndRead(t *testing.T) {
-	// Create a temp file for the test — cleaned up automatically after.
 	f, err := os.CreateTemp("", "segment-*.log")
 	if err != nil {
 		t.Fatal(err)
@@ -23,21 +20,19 @@ func TestSegmentAppendAndRead(t *testing.T) {
 	}
 	defer seg.Close()
 
-	// Append three messages and remember their offsets.
 	messages := []string{"hello", "world", "logstream"}
 	offsets := make([]uint64, len(messages))
 
 	for i, msg := range messages {
-		off, err := seg.Append([]byte(msg))
+		off, err := seg.Append([]byte("key"), []byte(msg))
 		if err != nil {
 			t.Fatalf("Append %q: %v", msg, err)
 		}
 		offsets[i] = off
 	}
 
-	// Read each message back by its offset — order shouldn't matter.
 	for i, msg := range messages {
-		got, err := seg.ReadAt(offsets[i])
+		_, got, err := seg.ReadAt(offsets[i])
 		if err != nil {
 			t.Fatalf("ReadAt offset %d: %v", offsets[i], err)
 		}
@@ -56,16 +51,18 @@ func TestSegmentOffsetProgresses(t *testing.T) {
 	seg, _ := NewSegment(path, 0)
 	defer seg.Close()
 
-	off1, _ := seg.Append([]byte("a"))   // 4 + 1 = 5 bytes
-	off2, _ := seg.Append([]byte("bb"))  // 4 + 2 = 6 bytes
+	// nil key: 4 (key len) + 0 (key) + 4 (val len) + 1 (val "a") = 9 bytes
+	off1, _ := seg.Append(nil, []byte("a"))
+	// nil key: 4 + 0 + 4 + 2 = 10 bytes
+	off2, _ := seg.Append(nil, []byte("bb"))
 
 	if off1 != 0 {
 		t.Errorf("first offset should be 0, got %d", off1)
 	}
-	if off2 != 5 {
-		t.Errorf("second offset should be 5, got %d", off2)
+	if off2 != 9 {
+		t.Errorf("second offset should be 9, got %d", off2)
 	}
-	if seg.Size() != 11 {
-		t.Errorf("size should be 11, got %d", seg.Size())
+	if seg.Size() != 19 {
+		t.Errorf("size should be 19, got %d", seg.Size())
 	}
 }
